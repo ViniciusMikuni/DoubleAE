@@ -207,7 +207,7 @@ if __name__ == "__main__":
             load = flags.load,callbacks=callbacks)
     if flags.double or flags.all:
         pred_double = TrainDoubleAE(
-            feed_dict,path="../weights/saved-model-doubleAE_10_v4.hdf5",
+            feed_dict,path="../weights/saved-model-doubleAE_10_v1.hdf5",
             load = flags.load,callbacks=callbacks)
     if flags.single or flags.all:
         pred_single = TrainSingleAE(

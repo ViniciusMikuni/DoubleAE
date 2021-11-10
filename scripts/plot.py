@@ -21,7 +21,7 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.callbacks import ModelCheckpoint
     
 os.environ['CUDA_VISIBLE_DEVICES']="2"
-os.environ['CUDA_DEVICE_ORDER']="PCI_BUS_ID"
+
 
 import matplotlib as mpl
 from matplotlib import rc
@@ -71,24 +71,34 @@ def DisCo(X,Y):
     return dcor
 
 def calc_sig(data,bkg,unc=0):
-    #print(poisson.pmf(k=data, mu=bkg),poisson.pmf(k=data, mu=data))
     if data/bkg<1:return 0
     return (max(data-(1+unc)*bkg,0))/np.sqrt(data)
-    return np.sqrt(-2*np.log(poisson.pmf(k=data, mu=bkg)/(poisson.pmf(k=data, mu=data))))
 
-signal_list = [r'A$\rightarrow$ 4l',r'h$^\pm\rightarrow\tau\nu$',r'h$^0\rightarrow\tau\tau$','LQ']
+signal_list = [
+    r'A$\rightarrow$ 4l',
+    r'h$^\pm\rightarrow\tau\nu$',
+    r'h$^0\rightarrow\tau\tau$',
+    'LQ'
+]
 style = ['-','--']
 color_list = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
 markers = ['o','p','s','P','*','X','D']
 
 name_conversion = {
-    'AE1': 'Double DisCo 1',
-    'AE2': 'Double DisCo 2',
-    'baseline': 'Supervised',
+    'AE1': 'Autoencoder 1',
+    'AE2': 'Autoencoder 2',
+    #'baseline': 'Supervised',
     'AE': 'Single AE',
     'combined':'Combined double AE'
 }
 
+conversion_style = {
+    'AE1': '-.',
+    'AE2': '--',
+    'baseline': '-.',
+    'AE': '-',
+    'combined':':',
+}
 
 def FixSigEff(labels,eff=0.01):
     signals = np.unique(labels)
@@ -140,16 +150,17 @@ def CombineAE(data1,data2,label,load = False):
     return fpr,tpr
 
 def CombineDiagAE(data1,data2,label):
-    fpr = np.linspace(1e-5,0.999,5000)
-    tpr = np.zeros(fpr.size)
+    fpr = np.linspace(1e-5,0.999,500)
+    cut = []
     for ibkg,bkg_eff in enumerate(fpr):
         eff = np.sqrt(bkg_eff)
-        xcut = np.quantile(data1[label==0],1- eff)
-        ycut = np.quantile(data2[(label==0) & (data1> xcut)],1.0 - bkg_eff/eff)
-        tpr[ibkg] = np.sum((data1[label!=0]>xcut) & (data2[label!=0]>ycut))/np.sum(label!=0)
+        xcut = np.quantile(data_dict['AE1'][label==0],1- eff)
+        cut.append((xcut, np.quantile(data2[(label==0) & (data1> xcut)],1.0 - bkg_eff/eff)))
+        # ycut.append(np.quantile(data2[(label==0) & (data1> xcut)],1.0 - bkg_eff/eff))
+        # tpr[ibkg] = np.sum((data1[label!=0]>xcut) & (data2[label!=0]>ycut))/np.sum(label!=0)
 
 
-    return tpr,fpr
+    return fpr,cut
     
 
 
@@ -174,37 +185,6 @@ def Plot_2D(folder_name):
     
     plt.legend(frameon=True,fontsize=20)
     plt.savefig(os.path.join(folder_name,'disco_AE.pdf'),dpi=1200)
-
-
-def Plot_ROC(folder_name):
-    fig,_ = SetFig("True positive rate","1 - Fake Rate")
-    
-    for algo in name_conversion:    
-        if 'baseline' in algo:
-            fpr, tpr, _ = roc_curve(label[label<=1],data_dict[algo][label<=1][:,1], pos_label=1)    
-        else:
-            fpr, tpr, _ = roc_curve(label[label<=1],data_dict[algo][label<=1], pos_label=1)    
-        plt.plot(tpr,1-fpr,label="{} ({:.2f})".format(name_conversion[algo],auc(tpr,1-fpr)))
-
-    plt.legend(frameon=False,fontsize=20)
-    plt.savefig(os.path.join(folder_name,'roc.pdf'),dpi=1200)
-
-
-def Plot_SIC(folder_name):
-    fig,_ = SetFig("True positive rate",'SIC')
-    for algo in name_conversion:    
-        if 'baseline' in algo:continue
-        if 'baseline' in algo:
-            fpr, tpr, _ = roc_curve(label[label<=1],data_dict[algo][label<=1][:,1], pos_label=1)    
-        else:
-            fpr, tpr, _ = roc_curve(label[label<=1],data_dict[algo][label<=1], pos_label=1)    
-        finite = fpr>0
-        tpr = tpr[finite]
-        fpr=fpr[finite]
-        plt.plot(tpr,tpr/np.sqrt(fpr),label="{} ({:.2f})".format(name_conversion[algo],auc(fpr,tpr)))
-
-    plt.legend(frameon=False,fontsize=20)
-    plt.savefig(os.path.join(folder_name,'sic.pdf'),dpi=1200)
 
 
 
@@ -272,10 +252,6 @@ def Plot_Closure_Multi(folder_name):
                 if A < thresh or B < thresh or C < thresh or D < thresh: continue #avoid large statistical fluctuations
                 if isig==0:
                     xaxis.append(bkg_eff)
-                    #print(A/(A+B+C+D))
-                    # print(1.0*A*D/(B*C), bkg_eff,eff)
-                    # input()
-
                 closures[signal].append(1.0*A*D/(B*C))
 
 
@@ -294,57 +270,59 @@ def Plot_Closure_Multi(folder_name):
 
 
 def Plot_ROC_Multi(folder_name):
-
-    fig,ax = SetFig("True positive rate","1 - Fake Rate")
-    name_conversion = {
-        'AE1': 'Double Disco 1',
-        'AE2': 'Double Disco 2',   
-    }
-    
+    fig,ax = SetFig("True positive rate","1-Fake Rate")
+    lines = []
+    fpr_comb,cuts = CombineDiagAE(data_dict['AE1'],data_dict['AE2'],label)
+    lines.append(mlines.Line2D([], [], linestyle=conversion_style['combined'], color='black', label='Combined autoencoder'))
     for isig, signal in enumerate(signal_list):
         sel = (label==0) | (label==isig+1)
         for ialgo, algo in enumerate(name_conversion):    
-            fpr, tpr, _ = roc_curve(label[sel],data_dict[algo][sel], pos_label=isig+1)    
-            #plt.plot(tpr,1-fpr,style[ialgo],color = color_list[isig],label="{} ({:.2f})".format(signal,auc(tpr,1-fpr)))
-            line,=plt.plot(tpr,1-fpr,style[ialgo],color = color_list[isig])
-            if ialgo ==0:
+            fpr, tpr, _ = roc_curve(label[sel],data_dict[algo][sel], pos_label=isig+1)
+            line,=plt.plot(tpr,1.-fpr,conversion_style[algo],color = color_list[isig])
+            if conversion_style[algo] == '-':
                 line.set_label(signal)
+
+            if isig ==0:
+                lines.append(mlines.Line2D([], [], linestyle=conversion_style[algo], color='black', label=name_conversion[algo]))
             
-        tpr,fpr = CombineDiagAE(data_dict['AE1'][sel],data_dict['AE2'][sel],label[sel])
-        #plt.plot(tpr,1-fpr,':',color = color_list[isig],label="{} ({:.2f})".format(signal,auc(tpr,1-fpr)))      
-        plt.plot(tpr,1-fpr,':',color = color_list[isig])      
+        tpr_comb=[]
+        for cut in cuts:            
+            tpr_comb.append(np.sum((data_dict['AE1'][label==isig+1]>cut[0]) & (data_dict['AE2'][label==isig+1]>cut[1]))/np.sum(label==isig+1))
+        plt.plot(tpr_comb,1.0-fpr_comb,conversion_style['combined'],color = color_list[isig])      
+    #plt.yscale("log")
+    # plt.xscale("log")
     leg1=plt.legend(frameon=False,fontsize=14,ncol=2,loc='center left')
-    line = mlines.Line2D([], [], color='black', label='Autoencoder 1')
-    dash = mlines.Line2D([], [], linestyle='--',color='black', label='Autoencoder 2')
-    dot = mlines.Line2D([], [], linestyle=':',color='black', label='Combined autoencoder')
-    plt.legend(handles=[line,dash,dot],frameon=False,fontsize=14,loc='lower left')
+    plt.legend(handles=lines,frameon=False,fontsize=14,loc='lower left')
     ax.add_artist(leg1)
     plt.savefig(os.path.join(folder_name,'roc_comparison.pdf'),bbox_inches='tight',dpi=1200)
 
 
 
 def Plot_SIC_Multi(folder_name):            
-    name_conversion = {
-        'AE1': 'Double Disco 1',
-        'AE2': 'Double Disco 2',   
-    }
-
     fig,ax = SetFig("True positive rate","SIC")
+
+    lines = []
+    fpr_comb,cuts = CombineDiagAE(data_dict['AE1'],data_dict['AE2'],label)
+    lines.append(mlines.Line2D([], [], linestyle=conversion_style['combined'], color='black', label='Combined autoencoder'))
     for isig, signal in enumerate(signal_list):
         sel = (label==0) | (label==isig+1)
         for ialgo, algo in enumerate(name_conversion):    
             fpr, tpr, _ = roc_curve(label[sel],data_dict[algo][sel], pos_label=isig+1)    
-            line,=plt.plot(tpr,tpr/(fpr**0.5),style[ialgo],color = color_list[isig])
-            if ialgo ==0:
+            line,=plt.plot(tpr,tpr/(fpr**0.5),conversion_style[algo],color = color_list[isig])
+            if conversion_style[algo] == '-':
                 line.set_label(signal)
-        tpr,fpr = CombineDiagAE(data_dict['AE1'][sel],data_dict['AE2'][sel],label[sel])
-        #plt.plot(tpr,tpr/(fpr**0.5),':',color = color_list[isig],label="{} ({:.2f})".format(signal,auc(tpr,1-fpr)))    
-        plt.plot(tpr,tpr/(fpr**0.5),':',color = color_list[isig])      
-    leg1 = plt.legend(frameon=False,fontsize=14,ncol=2,loc=(0.1,0.8))
-    line = mlines.Line2D([], [], color='black', label='Autoencoder 1')
-    dash = mlines.Line2D([], [], linestyle='--',color='black', label='Autoencoder 2')
-    dot = mlines.Line2D([], [], linestyle=':',color='black', label='Combined autoencoder')
-    plt.legend(handles=[line,dash,dot],frameon=False,fontsize=14,loc='upper right')
+
+            if isig ==0:
+                lines.append(mlines.Line2D([], [], linestyle=conversion_style[algo], color='black', label=name_conversion[algo]))
+            
+        tpr_comb=[]
+        for cut in cuts:            
+            tpr_comb.append(np.sum((data_dict['AE1'][label==isig+1]>cut[0]) & (data_dict['AE2'][label==isig+1]>cut[1]))/np.sum(label==isig+1))
+        plt.plot(tpr_comb,tpr_comb/(fpr_comb**0.5),conversion_style['combined'],color = color_list[isig])      
+
+    plt.ylim([0,3.0])
+    leg1 = plt.legend(frameon=False,fontsize=14,ncol=2,loc='lower right')
+    plt.legend(handles=lines,frameon=False,fontsize=14,loc='upper right')
     ax.add_artist(leg1)
     plt.savefig(os.path.join(folder_name,'sic_comparison.pdf'),bbox_inches='tight',dpi=1200)
 
@@ -376,7 +354,6 @@ def Plot_SIC_2D(folder_name):
 
 
 def Plot_Significance(folder_name):
-    from scipy.stats import poisson
     sig_eff = 1e-3
     keep_mask =FixSigEff(label,sig_eff)
     fig,ax = SetFig("SM efficiency","Significance")
@@ -405,10 +382,11 @@ def Plot_Significance(folder_name):
             D = np.sum((data_dict['AE1'][sel]<xcut)*(data_dict['AE2'][sel]<ycut))
 
             significances[signal].append(calc_sig(A,bkg))
-            significances_abcd[signal].append(calc_sig(1.0*A,1.0*(B*C)/D,.05))
+            significances_abcd[signal].append(calc_sig(1.0*A,1.0*(B*C)/D))
             #print(bkg_eff,(B*C)/(A*D))
     maxsig = 0
     for isig, signal in enumerate(signal_list+['SM']):
+
         plt.plot(bkg_effs,significances[signal],'--',color=color_list[isig])
         plt.plot(bkg_effs,significances_abcd[signal],color=color_list[isig],label="{}".format(signal))
         if maxsig < np.max(significances_abcd[signal]):
@@ -426,7 +404,6 @@ def Plot_Significance(folder_name):
 
 
 def Plot_Significance_comp(folder_name):
-    from scipy.stats import poisson
     sig_eff = 1e-3
     keep_mask =FixSigEff(label,sig_eff)
     fig,ax = SetFig("SM efficiency","Significance")
@@ -461,7 +438,7 @@ def Plot_Significance_comp(folder_name):
     maxsig = 0
     for isig, signal in enumerate(signal_list):
         plt.plot(bkg_effs,significances[signal],color=color_list[isig],label="{}".format(signal))
-        plt.plot(bkg_effs,significances_single[signal],':',color=color_list[isig+1])
+        plt.plot(bkg_effs,significances_single[signal],':',color=color_list[isig])
         #,label="{}".format(signal)
         if maxsig < np.max(significances_single[signal]):
             maxsig = np.max(significances_single[signal])
@@ -478,7 +455,7 @@ def Plot_Significance_comp(folder_name):
 
 if __name__=='__main__':
     parser = OptionParser(usage="%prog [opt]  inputFiles")
-    parser.add_option("--folder", type="string", default="./", help="Folder containing input files")
+    parser.add_option("--folder", type="string", default="../h5", help="Folder containing input files")
     parser.add_option("--file", type="string", default="AEDisco_10.h5", help="Name of input file")
     (flags, args) = parser.parse_args()
     
@@ -499,15 +476,13 @@ if __name__=='__main__':
     plot_list = {
         # 'plot_mse':Plot_MSE,
         # 'plot_2d':Plot_2D,
-        # 'plot_roc':Plot_ROC,
-        # 'plot_sic':Plot_SIC,
         #'plot abcd closure':Plot_Closure,
-        'plot abcd closure all':Plot_Closure_Multi,
+        # 'plot abcd closure all':Plot_Closure_Multi,
         # 'plot multi roc':Plot_ROC_Multi,
         # 'plot multi sic':Plot_SIC_Multi,
         # 'plot 2d sic':Plot_SIC_2D,
-        #'plot significance':Plot_Significance,
-        # 'plot significance comparison':Plot_Significance_comp,
+        'plot significance':Plot_Significance,
+        #'plot significance comparison':Plot_Significance_comp,
     }
 
     for func in plot_list:
