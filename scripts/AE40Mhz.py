@@ -2,27 +2,17 @@ import numpy as np
 import h5py as h5
 import os
 from optparse import OptionParser
-import matplotlib.pyplot as plt
-from matplotlib import gridspec
 import tensorflow as tf
-from tensorflow.keras import backend as K
-import tensorflow.keras.layers as layers
-from tensorflow.keras import Sequential
-from tensorflow.keras.layers import Lambda, Dense, Flatten
+from tensorflow.keras.layers import Lambda, Dense, Flatten, Input, Dropout, BatchNormalization, Activation
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import LabelBinarizer
 from tensorflow.keras.losses import binary_crossentropy, mse
-from sklearn.model_selection import train_test_split
-from tensorflow.keras import layers
-from tensorflow.keras.callbacks import ModelCheckpoint
+from tensorflow.keras.optimizers import Adam
 
-from sklearn.model_selection import train_test_split
-import tensorflow as tf
-import tensorflow.keras
-from tensorflow.keras.layers import Input, Dropout, BatchNormalization, Activation
+
 from tensorflow.keras.models import Model
 from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.callbacks import EarlyStopping
+from tensorflow.keras.callbacks import EarlyStopping,ModelCheckpoint
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from Disco import DisCo
 from keras_flops import get_flops
@@ -37,7 +27,7 @@ LAYERSIZE = [256,128,64,32]
 ENCODESIZE = 5
 EPOCHS = 400
 LR = 0.0001 #learning rate
-opt = tensorflow.keras.optimizers.Adam(learning_rate=LR)
+opt = Adam(learning_rate=LR)
 
 
 def AE(NFEAT):
@@ -106,7 +96,7 @@ def TrainDoubleAE(data,path,load,callbacks):
                               data['X_train'][(data['Y_train']==0)],
                               epochs=EPOCHS, batch_size=10000,
                               callbacks=[callbacks,checkpoint],                        
-                              validation_data=([data['X_val'][(data['Y_val']==0)],data['X_val'][(data['Y_val']==0)]]))
+                              validation_data=([data['X_val'][(data['Y_val']==0)],data['X_val'][(data['Y_val']==0)]], data['X_val'][(data['Y_val']==0)]))
 
 
     mypreds = mymodel.predict([data['X_test'],data['X_test']],batch_size=10000)
@@ -217,7 +207,7 @@ if __name__ == "__main__":
             load = flags.load,callbacks=callbacks)
     if flags.double or flags.all:
         pred_double = TrainDoubleAE(
-            feed_dict,path="../weights/saved-model-doubleAE_10_v2.hdf5",
+            feed_dict,path="../weights/saved-model-doubleAE_10_v4.hdf5",
             load = flags.load,callbacks=callbacks)
     if flags.single or flags.all:
         pred_single = TrainSingleAE(
@@ -225,6 +215,9 @@ if __name__ == "__main__":
             load = flags.load,callbacks=callbacks)
 
     if flags.all:
+        if not os.path.exists('../h5'):
+            os.makedirs('../h5')
+
         with h5.File(os.path.join('../h5',flags.out), "w") as fh5:
             dset = fh5.create_dataset("AE1", data=pred_double['AE1'])
             dset = fh5.create_dataset("AE2", data=pred_double['AE2'])
